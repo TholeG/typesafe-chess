@@ -1,7 +1,7 @@
 {
   "name": "typesafe-chess",
   "version": "1.0.0",
-  "description": "",
+  "description": "Chess where both players are TypeSafe's Jev model: every move is a typed Choice decision",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -13,5 +13,10 @@
     "@typesafe-ai/sdk": "^0.6.0",
     "chess.js": "^1.4.0",
     "express": "^5.2.1"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TholeG/typesafe-chess.git"
   }
 }
