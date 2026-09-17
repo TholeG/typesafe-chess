@@ -9,7 +9,7 @@
 
 import { Chess } from "chess.js";
 import { TypeSafeClient, choice, score, noul } from "@typesafe-ai/sdk";
-import { exchangeOutcome, mateInOne } from "./tactics.js";
+import { exchangeOutcome, mateInOne, forcingReplyFacts } from "./tactics.js";
 
 const client = new TypeSafeClient({ timeout: 20000 });
 
@@ -58,7 +58,7 @@ function attackedAfter(chess, move) {
   return { attacked: true, defended: recapture, cheapestAttacker: PIECE_NAMES[cheapest.piece] };
 }
 
-function describeMove(chess, move) {
+function describeMove(chess, move, replyFacts = false) {
   const d = {
     piece: PIECE_NAMES[move.piece],
     from: move.from,
@@ -91,6 +91,10 @@ function describeMove(chess, move) {
     else if (net < 0) d.exchange_estimate = `LOSES about ${-net} after forced recaptures`;
     const reply = mateInOne(probe);
     if (reply) d.allows_opponent_mate_in_one = `yes: ${reply}`;
+    if (replyFacts) {
+      const facts = forcingReplyFacts(probe);
+      if (Object.keys(facts).length) d.opponent_forcing_replies = facts;
+    }
   }
   return d;
 }
@@ -139,13 +143,13 @@ const SCORE_MID = (SCORE_LEVELS.length - 1) / 2; // 3 = "Equal"
  *   evaluation: number, evaluationLegend: Record<string,string>, tactical: number,
  *   usage: {input_tokens:number, output_tokens:number}, model: string }>}
  */
-export async function evaluatePosition(chess, { history } = {}) {
+export async function evaluatePosition(chess, { history, replyFacts = false } = {}) {
   const color = chess.turn();
   const moves = chess.moves({ verbose: true });
   if (moves.length === 0) throw new Error("no legal moves");
 
   const criteria = {};
-  for (const m of moves) criteria[m.san] = describeMove(chess, m);
+  for (const m of moves) criteria[m.san] = describeMove(chess, m, replyFacts);
   const side = color === "w" ? "white" : "black";
 
   const { answers, usage, model } = await client.systemOne({
@@ -156,6 +160,12 @@ export async function evaluatePosition(chess, { history } = {}) {
           question: `Which move should ${PLAYERS[color].name} (${side}) play now?`,
           guidance: [
             "Never play a move marked allows_opponent_mate_in_one unless it checkmates first.",
+            ...(replyFacts ? [
+              "opponent_forcing_replies lists legal threats to any piece or your king. " +
+              "victim uses piece letter + square; evasions lists legal replies or their count. " +
+              "No immediate recapture does not prove a forced loss. " +
+              "exchange_estimate omits quiet threats: consider these replies before preferring material.",
+            ] : []),
             "exchange_estimate comes from a capture-only lookahead: prefer moves that win material, avoid moves that LOSE material unless they checkmate or force a bigger gain.",
             "Prefer captures of higher-value pieces, checks that gain something, and moves that improve piece activity.",
             "In the opening: develop minor pieces, control the centre, castle early.",
@@ -198,7 +208,7 @@ export async function evaluatePosition(chess, { history } = {}) {
  * Fast player: a single Jev call, play the most probable move.
  */
 export async function pickMove(chess) {
-  const ev = await evaluatePosition(chess);
+  const ev = await evaluatePosition(chess, { replyFacts: true });
   const san = Object.entries(ev.policy).sort((a, b) => b[1] - a[1])[0][0];
   return { san, probabilities: ev.policy, ...ev };
 }

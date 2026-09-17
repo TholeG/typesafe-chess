@@ -95,13 +95,15 @@ export class MCTS {
    * @param {number} [opts.simulations=16]  new evaluations (API calls) per move, root excluded
    * @param {number} [opts.concurrency=4]   parallel leaf evaluations
    * @param {number} [opts.cpuct=1.5]       exploration constant
-   * @param {(chess: Chess, extra?: {history: string[]}) => Promise<{policy: Record<string,number>, value: number}>} [opts.evaluate]
+   * @param {(chess: Chess, extra?: {history: string[], replyFacts?: boolean}) => Promise<{policy: Record<string,number>, value: number}>} [opts.evaluate]
    *        position evaluator; defaults to Jev. Injectable for tests.
    * @param {number} [opts.tacticalWeight=0.5] share of the leaf value taken from the code-side
    *        tactical delta (0 = pure Jev value, 1 = pure material/mate search).
    * @param {"q"|"visits"} [opts.selection="q"] final choice: Q among well-covered moves, or most visits
-   * @param {number} [opts.minVisitFraction=0.5] coverage needed (share of the max visits) to rank by Q
+   * @param {number} [opts.minVisitFraction=0] coverage needed (share of the max visits) to rank by Q
    * @param {number} [opts.minVisits=2] absolute minimum visits to rank by Q
+   * @param {number} [opts.rootTemperature=1] >=1; >1 flattens root priors, using a 0.001 floor
+   * @param {boolean} [opts.rootReplyFacts=true] add forcing-reply facts only to the root API call
    * @param {number} [opts.fpuPenalty=0.2] first-play urgency penalty below the parent's value
    */
   constructor(opts = {}) {
@@ -111,9 +113,14 @@ export class MCTS {
     this.evaluateFn = opts.evaluate ?? evaluatePosition;
     this.tacticalWeight = opts.tacticalWeight ?? 0.5;
     this.selection = opts.selection ?? "q";
-    this.minVisitFraction = opts.minVisitFraction ?? 0.5;
+    this.minVisitFraction = opts.minVisitFraction ?? 0;
     this.minVisits = opts.minVisits ?? 2;
     this.fpuPenalty = opts.fpuPenalty ?? 0.2;
+    this.rootReplyFacts = opts.rootReplyFacts ?? true;
+    this.rootTemperature = opts.rootTemperature ?? 1;
+    if (!Number.isFinite(this.rootTemperature) || this.rootTemperature < 1) {
+      throw new RangeError("rootTemperature must be finite and >= 1");
+    }
     this.cache = new Map(); // cacheKey -> resolved evaluation
     this.rootMaterial = 0;
     this.stats = this.freshStats();
@@ -124,17 +131,17 @@ export class MCTS {
   }
 
   /** Ensure a node is expanded (policy + value present). Returns the node's value. */
-  async evaluate(node, stats) {
+  async evaluate(node, stats, replyFacts = false) {
     if (!node.expanded) {
       if (!node.pending) {
-        const key = cacheKey(node.chess);
+        const key = (replyFacts ? "reply-facts:" : "") + cacheKey(node.chess);
         const cached = this.cache.get(key);
         if (cached) {
           stats.cacheHits++;
           node.pending = Promise.resolve(cached);
         } else {
           stats.inflight++;
-          node.pending = this.evaluateFn(node.chess, { history: node.history }).then((ev) => {
+          node.pending = this.evaluateFn(node.chess, { history: node.history, replyFacts }).then((ev) => {
             stats.inflight--;
             stats.evaluations++;
             stats.usage.input_tokens += ev.usage?.input_tokens ?? 0;
@@ -159,7 +166,9 @@ export class MCTS {
         node.value = this.tacticalWeight > 0 ? hybridValue(ev.value, node.chess, this.rootMaterial, this.tacticalWeight) : ev.value;
         node.eval = ev;
         node.edges = {};
-        for (const [san, P] of Object.entries(ev.policy)) node.edges[san] = { P, N: 0, W: 0, child: null };
+        for (const san of node.chess.moves()) {
+          node.edges[san] = { P: ev.policy[san] ?? 0, N: 0, W: 0, child: null };
+        }
         node.expanded = true;
       }
     }
@@ -218,14 +227,21 @@ export class MCTS {
     this.stats = stats;
     this.rootMaterial = (chess.turn() === "w" ? 1 : -1) * materialFor(chess); // White's perspective
     const root = new Node(new Chess(chess.fen()), chess.history(), gamePositionCounts(chess));
-    await this.evaluate(root, stats);
+    await this.evaluate(root, stats, this.rootReplyFacts);
     const rootEval = root.eval;
+    const rootEvaluations = stats.evaluations;
+    if (this.rootTemperature > 1) {
+      const edges = Object.values(root.edges);
+      const mass = edges.map((e) => Math.max(e.P, 0.001) ** (1 / this.rootTemperature));
+      const total = mass.reduce((a, b) => a + b, 0);
+      edges.forEach((e, i) => { e.rawPrior = e.P; e.P = mass[i] / total; });
+    }
 
     const maxTraversals = this.simulations * MAX_TRAVERSALS_PER_SIM;
     let failure = null;
     const worker = async () => {
       try {
-        while (!failure && stats.evaluations + stats.inflight < this.simulations && stats.traversals < maxTraversals) {
+        while (!failure && stats.evaluations - rootEvaluations + stats.inflight < this.simulations && stats.traversals < maxTraversals) {
           stats.traversals++;
           await this.simulate(root, stats);
         }
@@ -243,7 +259,12 @@ export class MCTS {
       c.move(san);
       const matesNow = c.isCheckmate();
       const allowsMate = !matesNow && !c.isGameOver() && mateInOne(c) !== null;
-      return { san, prior: e.P, visits: e.N, q: e.N > 0 ? e.W / e.N : null, matesNow, allowsMate };
+      return {
+        san, prior: e.rawPrior ?? e.P, searchPrior: e.P,
+        visits: e.N, q: e.N > 0 ? e.W / e.N : null, matesNow, allowsMate,
+        childJevValue: e.child?.jevValue ?? null,
+        childHybridValue: e.child?.value ?? null,
+      };
     });
     // Final choice. With a small budget, visit counts mostly mirror the prior, so we
     // rank by Q among moves that received comparable coverage (at least half of the
@@ -276,8 +297,9 @@ export class MCTS {
       priorBest: priorBest.san,
       changedBySearch: priorBest.san !== chosen.san,
       reason,
-      candidates: edges.slice(0, 5).map(({ san, prior, visits, q }) => ({ san, prior, visits, q })),
+      candidates: edges, // All legal moves, including unvisited moves.
       rootEval,
+      rootEvaluations,
       simulations: this.simulations,
       ...stats,
     };

@@ -83,12 +83,10 @@ The fix follows the TypeSafe rule of thumb, *keep what code can compute in code*
 - **Exact tactics at the root.** An immediate mate is always played; moves that allow a mate in
   one are excluded when an alternative exists.
 
-**Does it help now?** Re-running the same 2-game benchmark (`npm run match -- 16 6 2`, 16 evaluations
-per move, colours swapped, both players using the new tactical facts) the search won both games,
-one as White and one as Black, at about 47k tokens and 3 seconds per move versus 2.6k tokens and
-0.4 seconds for the single-call player. The search overruled Jev's first instinct in roughly half
-the moves. Two games are still a small sample; treat this as a promising signal, not a proof, and
-run `npm run match` yourself.
+**Does it help now?** Yes, and it is measured per move against Stockfish rather than by game results;
+see "Measuring strength with Stockfish" below. A 2-game match (`npm run match -- 16 6 2`) also went
+2–0 for the search, at about 47k tokens and 3 seconds per move versus 2.6k tokens and 0.4 seconds
+for the single-call player.
 
 ## Run it
 
@@ -154,13 +152,28 @@ npm run elo -- --player mcts --levels 1320,1600,1900,2200 --games 2
   not FIDE. Precision is the bigger issue: eight games give roughly ±200 Elo, and each MCTS game
   costs about 2M tokens.
 
-**First regret numbers** (10 positions from a low-depth Stockfish self-play game, oracle depth 12,
-MCTS with 16 evaluations): the fast player lost 22 cp per move on average and found Stockfish's
-move 6 times; the MCTS player lost 44 cp, found it 5 times and had one ≥100 cp miss. On this small
-sample the search did *not* beat the single call, despite winning the 2-game match. That is exactly
-why a per-move yardstick matters: game results at this sample size are noise, and the search
-still has tuning to do (the weight of the tactical delta, the visit threshold for the final choice,
-and the evaluation budget are the obvious knobs, all cheap to sweep with `npm run regret`).
+**Tuning loop, measured.** `npm run sweep` scores fixed positions once with Stockfish and then runs
+several MCTS configurations on them, so differences are differences in the search. Results live in
+`docs/sweep-*.json`. Two rounds so far, 20 tactical positions each, oracle depth 12, 16 evaluations:
+
+| Configuration | Avg loss | Median | Best move | ≥100 cp |
+| --- | --- | --- | --- | --- |
+| Fast (single call) | 168–190 cp | 82 | 5/20 | 6 |
+| MCTS, first version | 119 cp | 19 | 7/20 | 5 |
+| MCTS, visits-only selection | 156 cp | 43 | 7/20 | 6 |
+| MCTS, 32 evaluations | 123 cp | 22 | 6/20 | 5 |
+| **MCTS + forcing-reply facts at the root** | **25 cp** | **9** | **9/20** | **1** |
+| same, root prior temperature 1.5 | 46 cp | 9 | 9/20 | 3 |
+
+The decisive change came out of a code review of the first sweep (by a second model reading the
+JSON and replaying the positions with chess.js): the capture-only lookahead cannot see *quiet*
+threats, so in one position every rook move scored the same while one of them allowed a check with
+a single legal reply. The fix is again a code fact, `opponent_forcing_replies` in
+[`tactics.js`](tactics.js): for each candidate move, the opponent's checks that cannot be answered
+by capturing the checker (with the list of evasions) and captures without recapture. It is added
+only to the root call, so it costs a few hundred tokens per move, not per node. The same review also
+found that the root evaluation was eating one unit of the search budget and that moves Jev omits
+from its distribution never got a tree edge. The now-default configuration is the bold row.
 
 Beware of one Node quirk: the Stockfish WASM loader sets the global `fetch` to `null`, which
 silently breaks any HTTP client in the same process. The wrapper restores it.

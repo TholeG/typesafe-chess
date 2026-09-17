@@ -65,6 +65,47 @@ export function exchangeOutcome(chess, san) {
   return after - before;
 }
 
+/**
+ * Legal replies across the whole board; absence of a recapture is not
+ * a proof of material loss. Return at most two examples of each kind.
+ */
+export function forcingReplyFacts(chess) {
+  if (chess.isGameOver()) return {};
+  const probe = new Chess(chess.fen());
+  const capturedSquare = (m) => m.flags.includes("e")
+    ? m.to[0] + m.from[1] : m.to;
+  const captures = [], checks = [];
+  for (const m of probe.moves({ verbose: true })) {
+    const check = /[+#]$/.test(m.san);
+    if (!m.captured && !check) continue;
+    probe.move(m.san);
+    const replies = probe.moves({ verbose: true });
+    const recaptured = replies.some((r) =>
+      r.captured && capturedSquare(r) === m.to);
+    if (m.captured && !recaptured) {
+      captures.push({
+        san: m.san, victim: m.captured + capturedSquare(m),
+        value: PIECE_VALUES[m.captured],
+      });
+    }
+    if (check && !recaptured) {
+      checks.push({ san: m.san, replies: replies.map((r) => r.san) });
+    }
+    probe.undo();
+  }
+  captures.sort((a, b) => b.value - a.value || a.san.localeCompare(b.san));
+  checks.sort((a, b) =>
+    a.replies.length - b.replies.length || a.san.localeCompare(b.san));
+  const facts = {};
+  if (captures.length) facts.captures_without_recapture =
+    captures.slice(0, 2).map(({ san, victim }) => ({ san, victim }));
+  if (checks.length) facts.checks_without_checker_capture =
+    checks.slice(0, 2).map(({ san, replies }) => ({
+      san, evasions: replies.length <= 3 ? replies : replies.length,
+    }));
+  return facts;
+}
+
 /** SAN of a mating move for the side to move, or null. */
 export function mateInOne(chess) {
   for (const m of chess.moves()) if (m.endsWith("#")) return m;

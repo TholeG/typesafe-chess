@@ -121,7 +121,7 @@ app.post("/api/step", async (_req, res) => {
         changedBySearch: r.changedBySearch,
         reason: r.reason,
         pendingCollisions: r.pendingCollisions,
-        candidates: withSquares(r.candidates), // { san, prior, visits, q, from, to }
+        candidates: withSquares(r.candidates.slice(0, 5)), // { san, prior, visits, q, from, to }
         confidence: r.rootEval.confidence,
         evaluation: r.rootEval.evaluation,
         evaluationLabel: r.rootEval.evaluationLegend[String(Math.round(r.rootEval.evaluation))],

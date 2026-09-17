@@ -70,7 +70,7 @@ for (const c of CASES) {
   console.log(`      chosen ${r.san}  q=${r.q?.toFixed(2)}  visits=${r.visits}/${sumN}  evaluations=${r.evaluations}/${SIMS}  traversals=${r.traversals}  priorBest=${r.priorBest}${r.reason ? "  [" + r.reason + "]" : ""}`);
   console.log(`      top: ${r.candidates.map((x) => `${x.san} N=${x.visits} Q=${x.q == null ? "–" : x.q.toFixed(2)} P=${x.prior.toFixed(2)}`).join(" | ")}`);
   if (sumN !== r.traversals) { failed++; console.log(`      INVARIANT FAIL: root visits ${sumN} != traversals ${r.traversals}`); }
-  if (r.evaluations > SIMS) { failed++; console.log(`      INVARIANT FAIL: evaluations ${r.evaluations} > budget ${SIMS}`); }
+  if (r.evaluations - r.rootEvaluations > SIMS) { failed++; console.log(`      INVARIANT FAIL: search evaluations ${r.evaluations - r.rootEvaluations} > budget ${SIMS}`); }
   if (badQ.length) { failed++; console.log(`      INVARIANT FAIL: |Q|>1 on ${badQ.length} edges`); }
 }
 console.log(failed ? `\n${failed} problem(s)` : "\nAll mechanics tests passed");
