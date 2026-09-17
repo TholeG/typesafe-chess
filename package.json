@@ -9,7 +9,10 @@
     "match": "node scripts/match.mjs",
     "dev": "vite",
     "build": "vite build",
-    "prestart": "vite build"
+    "prestart": "vite build",
+    "regret": "node scripts/regret.mjs",
+    "elo": "node scripts/elo.mjs",
+    "selftest": "node scripts/mcts-selftest.mjs"
   },
   "keywords": [],
   "type": "module",
@@ -28,6 +31,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.1.1",
+    "stockfish": "^19.0.0",
     "vite": "^8.3.0"
   }
 }

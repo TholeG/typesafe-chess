@@ -131,6 +131,32 @@ Cost guide: a fast move uses roughly 2–3k tokens. An MCTS move with 16 evaluat
 The API key stays on the server. The browser only talks to three local endpoints:
 `GET /api/state`, `POST /api/new`, `POST /api/step`, `POST /api/settings`.
 
+## Measuring strength with Stockfish
+
+Two Jev players beating each other says little. The repo therefore includes a small UCI
+wrapper ([`stockfish-uci.js`](stockfish-uci.js)) around the `stockfish` npm package (WASM,
+runs in Node) and three scripts that use it as an external, deterministic reference:
+
+```sh
+npm run regret -- 10 16 12          # positions, MCTS evaluations, Stockfish depth
+npm run match -- 16 6 2 --vs stockfish --elo 1500 --depth 6
+npm run elo -- --player mcts --levels 1320,1600,1900,2200 --games 2
+```
+
+- **regret** scores every legal move in a set of middlegame positions with Stockfish, then
+  reports the centipawn loss of Jev's fast move and of Jev's MCTS move on the same positions.
+  This is the cheapest and most direct comparison: per move, on identical inputs, against a
+  fixed yardstick.
+- **match** can play either Jev player against Stockfish limited by `UCI_Elo`.
+- **elo** plays a ladder of Elo levels and fits a rating by maximum likelihood, with a 95 %
+  interval. The scale caveat is real: Stockfish's limiter is calibrated for the full engine at
+  tournament time controls, so numbers from the lite WASM build at fixed depth are relative,
+  not FIDE. Precision is the bigger issue: eight games give roughly ±200 Elo, and each MCTS game
+  costs about 2M tokens.
+
+Beware of one Node quirk: the Stockfish WASM loader sets the global `fetch` to `null`, which
+silently breaks any HTTP client in the same process. The wrapper restores it.
+
 ## What to look at
 
 - **Confidence is not strength.** In quiet openings the confidence is often below 0.2 because
@@ -156,7 +182,9 @@ Expect creative openings, sound development, and the occasional blunder. Expect 
 | `tactics.js` | Exact code-side helpers: material, capture-only lookahead, mate in one |
 | `server.js` | Express server, game state, settings and the JSON endpoints; serves the built client |
 | `client/` | React UI (Vite + [react-chessboard](https://github.com/Clariity/react-chessboard)): board, arrows, eval bar, analysis, move review |
-| `scripts/match.mjs` | Benchmark: MCTS vs fast player with alternating colours |
+| `stockfish-uci.js` | UCI wrapper around the Stockfish WASM package: best move, score all moves, strength limit |
+| `scripts/match.mjs` | Benchmark games: Jev vs Jev or Jev vs Stockfish, alternating colours |
+| `scripts/regret.mjs`, `scripts/elo.mjs` | Centipawn loss against Stockfish; Elo estimate from a ladder of games |
 | `scripts/mcts-selftest.mjs`, `mcts-oracle.mjs`, `mcts-inspect.mjs` | Mechanics tests without API calls, and a tree dump for any position |
 
 ## Learn more about TypeSafe
