@@ -86,7 +86,7 @@ npm start
 # open http://localhost:3000
 ```
 
-Click **Ein Zug** for a single move or **▶ Autoplay** to let the two Jevs play a full game.
+Click **One move** for a single move or **▶ Autoplay** to let the two Jevs play a full game.
 The right-hand panel shows the top five candidate moves with their probabilities, the confidence,
 the position score, the sharpness estimate, latency and token usage per move.
 

@@ -1,13 +1,13 @@
-// Kleiner Express-Server: hält eine Partie im Speicher, lässt auf Anfrage
-// Jev den nächsten Zug machen und liefert die statische Oberfläche aus.
-// Der TypeSafe-Key bleibt serverseitig (TYPESAFE_API_KEY im Environment).
+// Small Express server: keeps one game in memory, lets Jev make the next
+// move on request and serves the static UI.
+// The TypeSafe key stays server-side (TYPESAFE_API_KEY in the environment).
 
 import express from "express";
 import { Chess } from "chess.js";
 import { pickMove, PLAYERS } from "./jev-player.js";
 
 if (!process.env.TYPESAFE_API_KEY) {
-  console.error("TYPESAFE_API_KEY ist nicht gesetzt.");
+  console.error("TYPESAFE_API_KEY is not set.");
   process.exit(1);
 }
 
@@ -16,7 +16,7 @@ app.use(express.json());
 app.use(express.static("public"));
 
 let chess = new Chess();
-let log = []; // ein Eintrag pro gespieltem Zug, inkl. Jev-Antworten
+let log = []; // one entry per played move, including Jev's answers
 let totalUsage = { input_tokens: 0, output_tokens: 0 };
 let busy = false;
 
@@ -38,12 +38,12 @@ function snapshot() {
 
 function resultText() {
   if (!chess.isGameOver()) return null;
-  if (chess.isCheckmate()) return `Schachmatt. ${chess.turn() === "w" ? PLAYERS.b.name : PLAYERS.w.name} gewinnt.`;
-  if (chess.isStalemate()) return "Patt. Remis.";
-  if (chess.isThreefoldRepetition()) return "Dreifache Stellungswiederholung. Remis.";
-  if (chess.isInsufficientMaterial()) return "Ungenügendes Material. Remis.";
-  if (chess.isDrawByFiftyMoves?.() || chess.isDraw()) return "Remis (50-Züge-Regel).";
-  return "Remis.";
+  if (chess.isCheckmate()) return `Checkmate. ${chess.turn() === "w" ? PLAYERS.b.name : PLAYERS.w.name} wins.`;
+  if (chess.isStalemate()) return "Stalemate. Draw.";
+  if (chess.isThreefoldRepetition()) return "Threefold repetition. Draw.";
+  if (chess.isInsufficientMaterial()) return "Insufficient material. Draw.";
+  if (chess.isDrawByFiftyMoves?.() || chess.isDraw()) return "Draw (fifty-move rule).";
+  return "Draw.";
 }
 
 app.get("/api/state", (_req, res) => res.json(snapshot()));
@@ -56,7 +56,7 @@ app.post("/api/new", (_req, res) => {
 });
 
 app.post("/api/step", async (_req, res) => {
-  if (busy) return res.status(409).json({ error: "Jev denkt noch." });
+  if (busy) return res.status(409).json({ error: "Jev is still thinking." });
   if (chess.isGameOver()) return res.json(snapshot());
   busy = true;
   const color = chess.turn();
@@ -96,4 +96,4 @@ app.post("/api/step", async (_req, res) => {
 });
 
 const port = Number(process.env.PORT ?? 3000);
-app.listen(port, () => console.log(`TypeSafe-Schach läuft auf http://localhost:${port}`));
+app.listen(port, () => console.log(`TypeSafe chess is running at http://localhost:${port}`));

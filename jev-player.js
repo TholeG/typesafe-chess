@@ -1,11 +1,11 @@
-// Jev als Schachspieler.
+// Jev as a chess player.
 //
-// Arbeitsteilung nach dem TypeSafe-Modell: chess.js kennt die Regeln und
-// erzeugt die legalen Züge (Code). Jev bekommt die Stellung plus eine
-// Beschreibung jedes legalen Zugs als Choice-Optionen und wählt einen aus
-// (Urteil). Zusätzlich fragen wir im selben Aufruf eine Stellungsbewertung
-// (Score) und eine Noul-Frage nach taktischer Schärfe ab. Beide sind nur
-// Anzeige-Signale und beeinflussen den Zug nicht.
+// Division of labour, the TypeSafe way: chess.js knows the rules and
+// generates the legal moves (code). Jev receives the position plus a
+// description of every legal move as Choice options and picks one
+// (judgment). In the same call we also ask for a position score (Score)
+// and whether the position is tactically sharp (Noul). Both are display
+// signals only and do not influence the move.
 
 import { Chess } from "chess.js";
 import { TypeSafeClient, choice, score, noul } from "@typesafe-ai/sdk";
@@ -15,7 +15,7 @@ const client = new TypeSafeClient({ timeout: 20000 });
 const PIECE_NAMES = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
-// Zwei Spielstile, damit die beiden Jev-Instanzen sich unterscheiden.
+// Two playing styles so the two Jev instances differ.
 export const PLAYERS = {
   w: {
     name: "Jev White",
@@ -39,17 +39,17 @@ function materialBalance(chess) {
       sum += (sq.color === "w" ? 1 : -1) * PIECE_VALUES[sq.type];
     }
   }
-  return sum; // positiv = Weiß vorn
+  return sum; // positive = white is ahead
 }
 
-// Kann der Gegner nach diesem Zug die gezogene Figur auf ihrem Zielfeld schlagen?
+// After this move, can the opponent capture the moved piece on its destination square?
 function attackedAfter(chess, move) {
   const probe = new Chess(chess.fen());
   probe.move(move.san);
   if (probe.isGameOver()) return { attacked: false, defended: false };
   const enemy = probe.moves({ verbose: true }).filter((m) => m.to === move.to && m.captured);
   if (enemy.length === 0) return { attacked: false, defended: false };
-  // Verteidigt? Wir prüfen, ob nach dem billigsten gegnerischen Schlag ein Rückschlag existiert.
+  // Defended? Check whether a recapture exists after the cheapest enemy capture.
   const cheapest = enemy.reduce((a, b) => (PIECE_VALUES[a.piece] <= PIECE_VALUES[b.piece] ? a : b));
   const probe2 = new Chess(probe.fen());
   probe2.move(cheapest.san);
@@ -106,7 +106,7 @@ function buildState(chess, color) {
 }
 
 /**
- * Lässt Jev für die Seite am Zug einen Zug wählen.
+ * Lets Jev choose a move for the side to move.
  * @param {Chess} chess
  * @returns {{ san: string, confidence: number, probabilities: Record<string, number>,
  *             evaluation: number, evaluationLegend: Record<string,string>, tactical: number,
@@ -153,8 +153,8 @@ export async function pickMove(chess) {
   });
 
   const a = answers.move;
-  // Sicherheitsnetz: die Antwort ist immer ein Optionsschlüssel, also ein legaler Zug.
-  // Falls das Modell doch etwas anderes liefert, nehmen wir die wahrscheinlichste legale Option.
+  // Safety net: the answer is always an option key, i.e. a legal move.
+  // Should the model ever return something else, take the most probable legal option.
   let san = a.choice;
   if (!criteria[san]) {
     san = Object.entries(a.probabilities)

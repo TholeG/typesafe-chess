@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -47,15 +47,15 @@
 </style>
 </head>
 <body>
-<h1>♟ Jev gegen Jev <span class="muted">· beide Spieler entscheiden mit TypeSafe System One</span></h1>
+<h1>♟ Jev vs Jev <span class="muted">· both players decide with TypeSafe System One</span></h1>
 <div class="wrap">
   <div>
     <div class="board" id="board"></div>
     <div class="controls">
-      <button id="new">Neue Partie</button>
-      <button id="step" class="primary">Ein Zug</button>
+      <button id="new">New game</button>
+      <button id="step" class="primary">One move</button>
       <button id="auto">▶ Autoplay</button>
-      <label>Pause <input id="delay" type="range" min="0" max="3000" step="250" value="750" /> <span id="delayv">0,75 s</span></label>
+      <label>Delay <input id="delay" type="range" min="0" max="3000" step="250" value="750" /> <span id="delayv">0.75 s</span></label>
     </div>
     <div class="panel">
       <div class="status" id="status">…</div>
@@ -65,18 +65,18 @@
   </div>
   <div>
     <div class="panel">
-      <div class="status" id="lastTitle">Letzter Zug</div>
+      <div class="status" id="lastTitle">Last move</div>
       <div class="muted" id="lastMeta"></div>
       <div class="cands" id="cands"></div>
       <div style="margin-top:10px">
-        <div class="muted">Stellungsbewertung aus Sicht des Ziehenden: <b id="evalLabel">–</b></div>
+        <div class="muted">Position score from the mover's point of view: <b id="evalLabel">–</b></div>
         <div class="bar"><i id="evalBar" style="width:50%"></i></div>
-        <div class="muted" style="margin-top:6px">Taktisch scharf (Noul): <b id="tactical">–</b></div>
+        <div class="muted" style="margin-top:6px">Tactically sharp (Noul): <b id="tactical">–</b></div>
         <div class="bar"><i id="tacticalBar" style="width:0%"></i></div>
       </div>
     </div>
     <div class="panel">
-      <div class="status">Partie</div>
+      <div class="status">Game</div>
       <div class="moves" id="moves"></div>
     </div>
   </div>
@@ -124,12 +124,12 @@ function render(s) {
   renderBoard(s.fen, last);
   const side = s.turn === "w" ? s.players.w : s.players.b;
   $("status").textContent = s.gameOver ? s.result
-    : s.busy || inflight ? `${side} denkt …` : `${side} am Zug${s.inCheck ? " (Schach)" : ""} · Zug ${s.moveNumber}`;
-  $("usage").textContent = `Tokens gesamt: ${s.totalUsage.input_tokens} in / ${s.totalUsage.output_tokens} out · Halbzüge: ${s.log.length}`;
+    : s.busy || inflight ? `${side} is thinking …` : `${side} to move${s.inCheck ? " (check)" : ""} · move ${s.moveNumber}`;
+  $("usage").textContent = `Total tokens: ${s.totalUsage.input_tokens} in / ${s.totalUsage.output_tokens} out · plies: ${s.log.length}`;
 
   if (last) {
     $("lastTitle").textContent = `${last.player}: ${last.san}`;
-    $("lastMeta").textContent = `Confidence ${last.confidence.toFixed(2)} · ${last.ms} ms · ${last.model} · ${last.usage.input_tokens}/${last.usage.output_tokens} Tokens`;
+    $("lastMeta").textContent = `Confidence ${last.confidence.toFixed(2)} · ${last.ms} ms · ${last.model} · ${last.usage.input_tokens}/${last.usage.output_tokens} tokens`;
     $("cands").innerHTML = last.top.map(c =>
       `<span>${c.san}</span><div class="bar"><i style="width:${(c.p*100).toFixed(1)}%"></i></div><span>${pct(c.p)}</span>`).join("");
     $("evalLabel").textContent = `${last.evaluation.toFixed(2)} · ${last.evaluationLabel}`;
@@ -137,7 +137,7 @@ function render(s) {
     $("tactical").textContent = pct(last.tactical);
     $("tacticalBar").style.width = (last.tactical * 100).toFixed(0) + "%";
   } else {
-    $("lastTitle").textContent = "Noch kein Zug";
+    $("lastTitle").textContent = "No move yet";
     $("lastMeta").textContent = ""; $("cands").innerHTML = "";
     $("evalLabel").textContent = "–"; $("evalBar").style.width = "50%";
     $("tactical").textContent = "–"; $("tacticalBar").style.width = "0%";
@@ -164,7 +164,7 @@ async function step() {
   if (inflight) return;
   inflight = true; $("err").textContent = ""; $("step").disabled = true;
   try { render(await api("/api/step", "POST")); }
-  catch (e) { $("err").textContent = "Fehler: " + e.message; if (auto) toggleAuto(false); }
+  catch (e) { $("err").textContent = "Error: " + e.message; if (auto) toggleAuto(false); }
   finally { inflight = false; $("step").disabled = false; }
 }
 
@@ -185,7 +185,7 @@ async function loop() {
 $("new").onclick = async () => { toggleAuto(false); render(await api("/api/new", "POST")); };
 $("step").onclick = step;
 $("auto").onclick = () => toggleAuto();
-$("delay").oninput = () => $("delayv").textContent = (+$("delay").value / 1000).toLocaleString("de-DE") + " s";
+$("delay").oninput = () => $("delayv").textContent = (+$("delay").value / 1000).toLocaleString("en-US") + " s";
 
 api("/api/state").then(render).catch(e => $("err").textContent = e.message);
 </script>
