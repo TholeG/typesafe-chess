@@ -154,6 +154,14 @@ npm run elo -- --player mcts --levels 1320,1600,1900,2200 --games 2
   not FIDE. Precision is the bigger issue: eight games give roughly ±200 Elo, and each MCTS game
   costs about 2M tokens.
 
+**First regret numbers** (10 positions from a low-depth Stockfish self-play game, oracle depth 12,
+MCTS with 16 evaluations): the fast player lost 22 cp per move on average and found Stockfish's
+move 6 times; the MCTS player lost 44 cp, found it 5 times and had one ≥100 cp miss. On this small
+sample the search did *not* beat the single call, despite winning the 2-game match. That is exactly
+why a per-move yardstick matters: game results at this sample size are noise, and the search
+still has tuning to do (the weight of the tactical delta, the visit threshold for the final choice,
+and the evaluation budget are the obvious knobs, all cheap to sweep with `npm run regret`).
+
 Beware of one Node quirk: the Stockfish WASM loader sets the global `fetch` to `null`, which
 silently breaks any HTTP client in the same process. The wrapper restores it.
 
