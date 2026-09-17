@@ -5,7 +5,7 @@ No engine, no generated text: each move is a typed decision that the model retur
 probability distribution, and the code does the rest. Optionally, a Monte Carlo Tree Search uses
 those same distributions as policy and value, AlphaZero-style, to play noticeably better.
 
-![Jev vs Jev – board, candidate moves with probabilities, position score](docs/screenshot.png)
+![Jev vs Jev – board with candidate arrows, evaluation bar, MCTS analysis panel](docs/screenshot.png)
 
 ## Why this exists
 
@@ -66,6 +66,15 @@ This is what "programmable common sense" looks like in practice: the model never
 tree, it just answers the same typed questions about many positions, and 150 lines of ordinary
 code turn those answers into look-ahead.
 
+**Does it help?** Honest answer from the first benchmark (`npm run match`, 16 simulations,
+2 games, colours swapped): one draw and one loss against the single-call player, at roughly
+12× the tokens per move. The search overruled Jev's first instinct in about a third of the moves,
+but with a coarse 7-level value signal and only 16 expansions over ~30 legal moves the tree is
+shallow, and one-move tactics (a hanging recapture, a mate in one) still slip through. Two games
+prove nothing either way; treat the numbers as a starting point and run your own. The most
+promising levers are cheap code-side facts in the option descriptions (mate-in-one for both sides,
+a simple exchange evaluation) rather than more simulations.
+
 The whole integration is [`jev-player.js`](jev-player.js), about 170 lines including the
 option builder. The relevant request looks like this:
 
@@ -102,15 +111,30 @@ git clone https://github.com/TholeG/typesafe-chess.git
 cd typesafe-chess
 npm install
 export TYPESAFE_API_KEY=your_key_here     # or put it in .env and source it
-npm start
+npm start                                 # builds the React client, then serves it
 # open http://localhost:3000
 ```
 
+For UI development run the API and the Vite dev server side by side:
+
+```sh
+npm run build && node server.js           # API + built client on :3000
+npm run dev                               # hot-reloading client on :5173, proxies /api
+```
+
+To benchmark MCTS against the single-call player:
+
+```sh
+npm run match -- 16 6 2                   # simulations, parallel evaluations, games
+```
+
 Click **One move** for a single move or **▶ Autoplay** to let the two Jevs play a full game.
-Switch between **MCTS** and **Fast** in the player dropdown and set the number of simulations and
-parallel evaluations. The right-hand panel shows the top candidate moves (probabilities in fast
-mode, visits / prior / Q in MCTS mode), the position score, the sharpness estimate, latency and
-token usage per move.
+Switch between **MCTS** and **Fast** in the players card and set the number of simulations and
+parallel evaluations. The board draws arrows for the top candidates (the played move in blue),
+the bar next to it shows the position score from White's view, and the analysis card lists the
+candidates (probabilities in fast mode, visits / prior / Q in MCTS mode), the sharpness estimate,
+latency and token usage per move. Click any move in the list to review that position and its
+analysis.
 
 Cost guide: a fast move uses roughly 2–3k tokens. An MCTS move with 16 simulations uses roughly
 30–40k tokens and 3 seconds. Defaults can be set with `MODE`, `MCTS_SIMULATIONS` and
@@ -141,8 +165,9 @@ Expect creative openings, sound development, and the occasional blunder. Expect 
 | --- | --- |
 | `jev-player.js` | Builds the state and questions, calls the TypeSafe SDK, returns policy and value |
 | `mcts.js` | PUCT tree search using Jev's policy and value, with concurrency and a transposition cache |
-| `server.js` | Express server, game state, settings and the JSON endpoints |
-| `public/index.html` | Board, autoplay, candidate bars, score and sharpness display |
+| `server.js` | Express server, game state, settings and the JSON endpoints; serves the built client |
+| `client/` | React UI (Vite + [react-chessboard](https://github.com/Clariity/react-chessboard)): board, arrows, eval bar, analysis, move review |
+| `scripts/match.mjs` | Benchmark: MCTS vs fast player with alternating colours |
 
 ## Learn more about TypeSafe
 
@@ -156,4 +181,4 @@ Expect creative openings, sound development, and the occasional blunder. Expect 
 - Coding agent? Install the [TypeSafe skill](https://github.com/typesafe-ai/skills) and it will
   read the live docs before writing an integration. This repo was built that way.
 
-MIT licensed. Built in an afternoon with Claude Code and the TypeSafe agent skill.
+MIT licensed. Built in a day with Claude Code and the TypeSafe agent skill.

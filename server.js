@@ -3,6 +3,9 @@
 // The TypeSafe key stays server-side (TYPESAFE_API_KEY in the environment).
 
 import express from "express";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Chess } from "chess.js";
 import { pickMove, PLAYERS } from "./jev-player.js";
 import { MCTS } from "./mcts.js";
@@ -12,9 +15,16 @@ if (!process.env.TYPESAFE_API_KEY) {
   process.exit(1);
 }
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.join(__dirname, "dist");
+if (!fs.existsSync(path.join(distDir, "index.html"))) {
+  console.error("dist/index.html not found. Run `npm run build` (or `npm start`, which builds first).");
+  process.exit(1);
+}
+
 const app = express();
 app.use(express.json());
-app.use(express.static("public"));
+app.use(express.static(distDir));
 
 // Search settings. "fast" = one Jev call per move. "mcts" = tree search with
 // Jev as policy and value; each expansion is one Jev call (minus cache hits).
@@ -87,6 +97,9 @@ app.post("/api/step", async (_req, res) => {
   busy = true;
   const color = chess.turn();
   const started = Date.now();
+  // san -> { from, to } for the position before the move, used to draw candidate arrows
+  const squares = Object.fromEntries(chess.moves({ verbose: true }).map((m) => [m.san, { from: m.from, to: m.to }]));
+  const withSquares = (cands) => cands.map((c) => ({ ...c, ...squares[c.san] }));
   try {
     let entry;
     if (settings.mode === "mcts") {
@@ -101,7 +114,7 @@ app.post("/api/step", async (_req, res) => {
         q: r.q,
         priorBest: r.priorBest,
         changedBySearch: r.changedBySearch,
-        candidates: r.candidates,           // { san, prior, visits, q }
+        candidates: withSquares(r.candidates), // { san, prior, visits, q, from, to }
         confidence: r.rootEval.confidence,
         evaluation: r.rootEval.evaluation,
         evaluationLabel: r.rootEval.evaluationLegend[String(Math.round(r.rootEval.evaluation))],
@@ -115,9 +128,9 @@ app.post("/api/step", async (_req, res) => {
       entry = {
         mode: "fast",
         san: move.san, from: move.from, to: move.to,
-        candidates: Object.entries(pick.probabilities)
+        candidates: withSquares(Object.entries(pick.probabilities)
           .sort((a, b) => b[1] - a[1]).slice(0, 5)
-          .map(([san, prior]) => ({ san, prior, visits: null, q: null })),
+          .map(([san, prior]) => ({ san, prior, visits: null, q: null }))),
         confidence: pick.confidence,
         evaluation: pick.evaluation,
         evaluationLabel: pick.evaluationLegend[String(Math.round(pick.evaluation))],
@@ -128,7 +141,7 @@ app.post("/api/step", async (_req, res) => {
     }
     totalUsage.input_tokens += entry.usage.input_tokens;
     totalUsage.output_tokens += entry.usage.output_tokens;
-    log.push({ ply: log.length + 1, color, player: PLAYERS[color].name, ms: Date.now() - started, ...entry });
+    log.push({ ply: log.length + 1, color, player: PLAYERS[color].name, ms: Date.now() - started, fenAfter: chess.fen(), ...entry });
     res.json(snapshot());
   } catch (err) {
     console.error(err);
