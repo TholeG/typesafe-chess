@@ -1,8 +1,9 @@
 # Jev vs Jev – Chess where every move is a TypeSafe decision
 
 Two virtual chess players, both powered by **[TypeSafe](https://typesafe.ai)**'s System One model **Jev**.
-No search tree, no engine, no generated text: each move is a single typed decision
-that the model returns with a full probability distribution, and the code does the rest.
+No engine, no generated text: each move is a typed decision that the model returns with a full
+probability distribution, and the code does the rest. Optionally, a Monte Carlo Tree Search uses
+those same distributions as policy and value, AlphaZero-style, to play noticeably better.
 
 ![Jev vs Jev – board, candidate moves with probabilities, position score](docs/screenshot.png)
 
@@ -23,7 +24,7 @@ That is what makes System One models feel like a new programming primitive:
 | A **Noul** (yes/no) question | The probability that the position is tactically sharp |
 
 All three questions ride along in **one request** and are answered in parallel.
-A move takes about 350 ms end to end.
+In fast mode a move takes about 350 ms end to end.
 
 ## How it works
 
@@ -45,6 +46,25 @@ chess.js (rules) ──► legal moves ──► one Choice option per move ─�
 
 White is told to play actively, Black to play solidly. Same model, two personalities, both expressed
 as plain text in the state.
+
+### MCTS: Jev as policy and value network
+
+The same Jev call that picks a move in fast mode is exactly what an AlphaZero-style search needs
+from a neural network: a **policy** (prior probability for every legal move, from the Choice
+answer) and a **value** (how good the position is for the side to move, from the Score answer,
+mapped to −1…+1). [`mcts.js`](mcts.js) wires that into a PUCT tree search:
+
+- Every tree node costs one Jev call. There are no random rollouts.
+- Selection follows PUCT: `Q + c · P · √N_parent / (1 + N_child)`, so Jev's prior steers the
+  search towards its favourite moves while the value from deeper positions can overrule it.
+- Leaves are evaluated concurrently (virtual loss), so 16 simulations take about 3 seconds instead of 6.
+- Transpositions are cached for the whole game.
+- The move with the most visits is played. The UI shows visits, prior and Q for the top candidates,
+  and says whether the search **confirmed or overruled** Jev's first instinct.
+
+This is what "programmable common sense" looks like in practice: the model never sees a search
+tree, it just answers the same typed questions about many positions, and 150 lines of ordinary
+code turn those answers into look-ahead.
 
 The whole integration is [`jev-player.js`](jev-player.js), about 170 lines including the
 option builder. The relevant request looks like this:
@@ -87,11 +107,17 @@ npm start
 ```
 
 Click **One move** for a single move or **▶ Autoplay** to let the two Jevs play a full game.
-The right-hand panel shows the top five candidate moves with their probabilities, the confidence,
-the position score, the sharpness estimate, latency and token usage per move.
+Switch between **MCTS** and **Fast** in the player dropdown and set the number of simulations and
+parallel evaluations. The right-hand panel shows the top candidate moves (probabilities in fast
+mode, visits / prior / Q in MCTS mode), the position score, the sharpness estimate, latency and
+token usage per move.
+
+Cost guide: a fast move uses roughly 2–3k tokens. An MCTS move with 16 simulations uses roughly
+30–40k tokens and 3 seconds. Defaults can be set with `MODE`, `MCTS_SIMULATIONS` and
+`MCTS_CONCURRENCY` environment variables.
 
 The API key stays on the server. The browser only talks to three local endpoints:
-`GET /api/state`, `POST /api/new`, `POST /api/step`.
+`GET /api/state`, `POST /api/new`, `POST /api/step`, `POST /api/settings`.
 
 ## What to look at
 
@@ -113,8 +139,9 @@ Expect creative openings, sound development, and the occasional blunder. Expect 
 
 | File | Purpose |
 | --- | --- |
-| `jev-player.js` | Builds the state and questions, calls the TypeSafe SDK, returns the move |
-| `server.js` | Express server, game state, the three JSON endpoints |
+| `jev-player.js` | Builds the state and questions, calls the TypeSafe SDK, returns policy and value |
+| `mcts.js` | PUCT tree search using Jev's policy and value, with concurrency and a transposition cache |
+| `server.js` | Express server, game state, settings and the JSON endpoints |
 | `public/index.html` | Board, autoplay, candidate bars, score and sharpness display |
 
 ## Learn more about TypeSafe

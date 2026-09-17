@@ -41,6 +41,11 @@
   .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 3px; }
   .bar > i { display: block; height: 100%; background: var(--accent); }
   .cands { display: grid; grid-template-columns: 5em 1fr 4em; gap: 4px 10px; align-items: center; font-variant-numeric: tabular-nums; }
+  .cands.mcts { grid-template-columns: 5em 1fr 4.5em 4em 4.5em; }
+  .cands .h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .note { font-size: 13px; margin-top: 8px; padding: 6px 8px; border-radius: 6px; background: rgba(15,42,74,.08); }
+  select, input[type=number] { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 14px; }
+  input[type=number] { width: 4.5em; }
   .moves { columns: 2; font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 320px; overflow: auto; }
   .moves div { break-inside: avoid; }
   .err { color: #b3261e; }
@@ -57,6 +62,16 @@
       <button id="auto">▶ Autoplay</button>
       <label>Delay <input id="delay" type="range" min="0" max="3000" step="250" value="750" /> <span id="delayv">0.75 s</span></label>
     </div>
+    <div class="controls">
+      <label>Player
+        <select id="mode">
+          <option value="mcts">MCTS · Jev as policy + value</option>
+          <option value="fast">Fast · one Jev call per move</option>
+        </select>
+      </label>
+      <label id="simsLabel">Simulations <input id="sims" type="number" min="1" max="200" value="16" /></label>
+      <label>Parallel <input id="conc" type="number" min="1" max="16" value="4" /></label>
+    </div>
     <div class="panel">
       <div class="status" id="status">…</div>
       <div class="muted" id="usage"></div>
@@ -68,6 +83,7 @@
       <div class="status" id="lastTitle">Last move</div>
       <div class="muted" id="lastMeta"></div>
       <div class="cands" id="cands"></div>
+      <div class="note" id="searchNote" hidden></div>
       <div style="margin-top:10px">
         <div class="muted">Position score from the mover's point of view: <b id="evalLabel">–</b></div>
         <div class="bar"><i id="evalBar" style="width:50%"></i></div>
@@ -118,9 +134,23 @@ function renderBoard(fen, last) {
 }
 
 function pct(x) { return (x * 100).toFixed(0) + " %"; }
+function fmtQ(q) { return q == null ? "–" : (q >= 0 ? "+" : "") + q.toFixed(2); }
+let settingsSynced = false;
+function syncSettings(st) {
+  if (settingsSynced || !st) return;
+  $("mode").value = st.mode; $("sims").value = st.simulations; $("conc").value = st.concurrency;
+  settingsSynced = true;
+}
+async function pushSettings() {
+  const body = { mode: $("mode").value, simulations: +$("sims").value, concurrency: +$("conc").value };
+  $("simsLabel").style.opacity = body.mode === "mcts" ? 1 : .5;
+  const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  render(await r.json());
+}
 
 function render(s) {
   const last = s.log[s.log.length - 1];
+  syncSettings(s.settings);
   renderBoard(s.fen, last);
   const side = s.turn === "w" ? s.players.w : s.players.b;
   $("status").textContent = s.gameOver ? s.result
@@ -129,16 +159,34 @@ function render(s) {
 
   if (last) {
     $("lastTitle").textContent = `${last.player}: ${last.san}`;
-    $("lastMeta").textContent = `Confidence ${last.confidence.toFixed(2)} · ${last.ms} ms · ${last.model} · ${last.usage.input_tokens}/${last.usage.output_tokens} tokens`;
-    $("cands").innerHTML = last.top.map(c =>
-      `<span>${c.san}</span><div class="bar"><i style="width:${(c.p*100).toFixed(1)}%"></i></div><span>${pct(c.p)}</span>`).join("");
+    const isMcts = last.mode === "mcts";
+    $("lastMeta").textContent = isMcts
+      ? `MCTS ${last.simulations} sims · ${last.evaluations} Jev calls, ${last.cacheHits} cached · Q ${fmtQ(last.q)} · ${(last.ms/1000).toFixed(1)} s · ${last.model} · ${last.usage.input_tokens}/${last.usage.output_tokens} tokens`
+      : `Fast · confidence ${last.confidence.toFixed(2)} · ${last.ms} ms · ${last.model} · ${last.usage.input_tokens}/${last.usage.output_tokens} tokens`;
+    const cands = $("cands");
+    cands.className = "cands" + (isMcts ? " mcts" : "");
+    if (isMcts) {
+      const maxV = Math.max(1, ...last.candidates.map(c => c.visits));
+      cands.innerHTML = `<span class="h">move</span><span class="h">visits</span><span class="h"></span><span class="h">prior</span><span class="h">Q</span>` +
+        last.candidates.map(c =>
+          `<span>${c.san}</span><div class="bar"><i style="width:${(c.visits/maxV*100).toFixed(1)}%"></i></div><span>${c.visits}</span><span>${pct(c.prior)}</span><span>${fmtQ(c.q)}</span>`).join("");
+      const note = $("searchNote");
+      note.hidden = false;
+      note.textContent = last.changedBySearch
+        ? `Search overruled the prior: Jev's first instinct was ${last.priorBest}, the tree preferred ${last.san}.`
+        : `Search confirmed Jev's first instinct (${last.priorBest}).`;
+    } else {
+      cands.innerHTML = last.candidates.map(c =>
+        `<span>${c.san}</span><div class="bar"><i style="width:${(c.prior*100).toFixed(1)}%"></i></div><span>${pct(c.prior)}</span>`).join("");
+      $("searchNote").hidden = true;
+    }
     $("evalLabel").textContent = `${last.evaluation.toFixed(2)} · ${last.evaluationLabel}`;
     $("evalBar").style.width = (last.evaluation / 6 * 100).toFixed(0) + "%";
     $("tactical").textContent = pct(last.tactical);
     $("tacticalBar").style.width = (last.tactical * 100).toFixed(0) + "%";
   } else {
     $("lastTitle").textContent = "No move yet";
-    $("lastMeta").textContent = ""; $("cands").innerHTML = "";
+    $("lastMeta").textContent = ""; $("cands").innerHTML = ""; $("searchNote").hidden = true;
     $("evalLabel").textContent = "–"; $("evalBar").style.width = "50%";
     $("tactical").textContent = "–"; $("tacticalBar").style.width = "0%";
   }
@@ -185,6 +233,7 @@ async function loop() {
 $("new").onclick = async () => { toggleAuto(false); render(await api("/api/new", "POST")); };
 $("step").onclick = step;
 $("auto").onclick = () => toggleAuto();
+$("mode").onchange = pushSettings; $("sims").onchange = pushSettings; $("conc").onchange = pushSettings;
 $("delay").oninput = () => $("delayv").textContent = (+$("delay").value / 1000).toLocaleString("en-US") + " s";
 
 api("/api/state").then(render).catch(e => $("err").textContent = e.message);

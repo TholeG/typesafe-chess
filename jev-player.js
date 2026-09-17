@@ -105,27 +105,44 @@ function buildState(chess, color) {
   };
 }
 
+const SCORE_LEVELS = [
+  "Lost: decisive material deficit or unavoidable mate against us",
+  "Clearly worse: down material or under strong attack",
+  "Slightly worse",
+  "Equal / balanced",
+  "Slightly better",
+  "Clearly better: up material or strong attack",
+  "Winning: decisive material advantage or forced mate for us",
+];
+const SCORE_MID = (SCORE_LEVELS.length - 1) / 2; // 3 = "Equal"
+
 /**
- * Lets Jev choose a move for the side to move.
+ * One Jev call for one position: policy over legal moves, value of the position
+ * and two display signals. This is the single building block for both the
+ * fast player (one call per move) and the MCTS player (one call per tree node).
+ *
  * @param {Chess} chess
- * @returns {{ san: string, confidence: number, probabilities: Record<string, number>,
- *             evaluation: number, evaluationLegend: Record<string,string>, tactical: number,
- *             usage: {input_tokens:number, output_tokens:number}, model: string }}
+ * @returns {Promise<{
+ *   policy: Record<string, number>, confidence: number,
+ *   value: number,                 // [-1, 1] from the side to move's perspective
+ *   evaluation: number, evaluationLegend: Record<string,string>, tactical: number,
+ *   usage: {input_tokens:number, output_tokens:number}, model: string }>}
  */
-export async function pickMove(chess) {
+export async function evaluatePosition(chess) {
   const color = chess.turn();
   const moves = chess.moves({ verbose: true });
   if (moves.length === 0) throw new Error("no legal moves");
 
   const criteria = {};
   for (const m of moves) criteria[m.san] = describeMove(chess, m);
+  const side = color === "w" ? "white" : "black";
 
   const { answers, usage, model } = await client.systemOne({
     state: buildState(chess, color),
     questions: {
       move: choice(
         {
-          question: `Which move should ${PLAYERS[color].name} (${color === "w" ? "white" : "black"}) play now?`,
+          question: `Which move should ${PLAYERS[color].name} (${side}) play now?`,
           guidance: [
             "Never hang material for nothing: avoid moves marked as NOT defended unless they checkmate or win more material.",
             "Prefer captures of higher-value pieces, checks that gain something, and moves that improve piece activity.",
@@ -137,39 +154,39 @@ export async function pickMove(chess) {
         criteria,
       ),
       evaluation: score(
-        `From the point of view of the side to move (${color === "w" ? "white" : "black"}), how good is this position before the move?`,
-        [
-          "Lost: decisive material deficit or unavoidable mate against us",
-          "Clearly worse: down material or under strong attack",
-          "Slightly worse",
-          "Equal / balanced",
-          "Slightly better",
-          "Clearly better: up material or strong attack",
-          "Winning: decisive material advantage or forced mate for us",
-        ],
+        `From the point of view of the side to move (${side}), how good is this position before the move?`,
+        SCORE_LEVELS,
       ),
       tactical: noul("Is the position tactically sharp right now, with hanging pieces, checks or capture sequences that must be calculated?"),
     },
   });
 
-  const a = answers.move;
-  // Safety net: the answer is always an option key, i.e. a legal move.
-  // Should the model ever return something else, take the most probable legal option.
-  let san = a.choice;
-  if (!criteria[san]) {
-    san = Object.entries(a.probabilities)
-      .filter(([k]) => criteria[k])
-      .sort((x, y) => y[1] - x[1])[0][0];
+  // Safety net: keep only probabilities for legal moves and renormalise.
+  const policy = {};
+  let total = 0;
+  for (const [san, p] of Object.entries(answers.move.probabilities)) {
+    if (criteria[san]) { policy[san] = p; total += p; }
   }
+  if (total <= 0) { for (const m of moves) policy[m.san] = 1 / moves.length; total = 1; }
+  for (const san in policy) policy[san] /= total;
 
   return {
-    san,
-    confidence: a.confidence,
-    probabilities: a.probabilities,
+    policy,
+    confidence: answers.move.confidence,
+    value: (answers.evaluation.score - SCORE_MID) / SCORE_MID,
     evaluation: answers.evaluation.score,
     evaluationLegend: answers.evaluation.legend,
     tactical: answers.tactical.noul,
     usage,
     model,
   };
+}
+
+/**
+ * Fast player: a single Jev call, play the most probable move.
+ */
+export async function pickMove(chess) {
+  const ev = await evaluatePosition(chess);
+  const san = Object.entries(ev.policy).sort((a, b) => b[1] - a[1])[0][0];
+  return { san, probabilities: ev.policy, ...ev };
 }

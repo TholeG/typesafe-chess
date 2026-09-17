@@ -5,6 +5,7 @@
 import express from "express";
 import { Chess } from "chess.js";
 import { pickMove, PLAYERS } from "./jev-player.js";
+import { MCTS } from "./mcts.js";
 
 if (!process.env.TYPESAFE_API_KEY) {
   console.error("TYPESAFE_API_KEY is not set.");
@@ -15,10 +16,19 @@ const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
+// Search settings. "fast" = one Jev call per move. "mcts" = tree search with
+// Jev as policy and value; each expansion is one Jev call (minus cache hits).
+const settings = {
+  mode: process.env.MODE ?? "mcts",
+  simulations: Number(process.env.MCTS_SIMULATIONS ?? 16),
+  concurrency: Number(process.env.MCTS_CONCURRENCY ?? 4),
+};
+
 let chess = new Chess();
 let log = []; // one entry per played move, including Jev's answers
 let totalUsage = { input_tokens: 0, output_tokens: 0 };
 let busy = false;
+let searcher = new MCTS(settings); // its position cache persists for the whole game
 
 function snapshot() {
   return {
@@ -33,6 +43,7 @@ function snapshot() {
     log,
     totalUsage,
     busy,
+    settings,
   };
 }
 
@@ -46,12 +57,27 @@ function resultText() {
   return "Draw.";
 }
 
-app.get("/api/state", (_req, res) => res.json(snapshot()));
-
-app.post("/api/new", (_req, res) => {
+function newGame() {
   chess = new Chess();
   log = [];
   totalUsage = { input_tokens: 0, output_tokens: 0 };
+  searcher = new MCTS(settings);
+}
+
+app.get("/api/state", (_req, res) => res.json(snapshot()));
+
+app.post("/api/new", (_req, res) => {
+  newGame();
+  res.json(snapshot());
+});
+
+app.post("/api/settings", (req, res) => {
+  const { mode, simulations, concurrency } = req.body ?? {};
+  if (mode === "fast" || mode === "mcts") settings.mode = mode;
+  if (Number.isInteger(simulations) && simulations >= 1 && simulations <= 200) settings.simulations = simulations;
+  if (Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 16) settings.concurrency = concurrency;
+  searcher.simulations = settings.simulations;
+  searcher.concurrency = settings.concurrency;
   res.json(snapshot());
 });
 
@@ -62,30 +88,47 @@ app.post("/api/step", async (_req, res) => {
   const color = chess.turn();
   const started = Date.now();
   try {
-    const pick = await pickMove(chess);
-    const move = chess.move(pick.san);
-    totalUsage.input_tokens += pick.usage.input_tokens;
-    totalUsage.output_tokens += pick.usage.output_tokens;
-    const top = Object.entries(pick.probabilities)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([san, p]) => ({ san, p }));
-    log.push({
-      ply: log.length + 1,
-      color,
-      player: PLAYERS[color].name,
-      san: move.san,
-      from: move.from,
-      to: move.to,
-      confidence: pick.confidence,
-      top,
-      evaluation: pick.evaluation,
-      evaluationLabel: pick.evaluationLegend[String(Math.round(pick.evaluation))],
-      tactical: pick.tactical,
-      ms: Date.now() - started,
-      usage: pick.usage,
-      model: pick.model,
-    });
+    let entry;
+    if (settings.mode === "mcts") {
+      const r = await searcher.search(chess);
+      const move = chess.move(r.san);
+      entry = {
+        mode: "mcts",
+        san: move.san, from: move.from, to: move.to,
+        simulations: r.simulations,
+        evaluations: r.evaluations,
+        cacheHits: r.cacheHits,
+        q: r.q,
+        priorBest: r.priorBest,
+        changedBySearch: r.changedBySearch,
+        candidates: r.candidates,           // { san, prior, visits, q }
+        confidence: r.rootEval.confidence,
+        evaluation: r.rootEval.evaluation,
+        evaluationLabel: r.rootEval.evaluationLegend[String(Math.round(r.rootEval.evaluation))],
+        tactical: r.rootEval.tactical,
+        usage: r.usage,
+        model: r.model ?? r.rootEval.model,
+      };
+    } else {
+      const pick = await pickMove(chess);
+      const move = chess.move(pick.san);
+      entry = {
+        mode: "fast",
+        san: move.san, from: move.from, to: move.to,
+        candidates: Object.entries(pick.probabilities)
+          .sort((a, b) => b[1] - a[1]).slice(0, 5)
+          .map(([san, prior]) => ({ san, prior, visits: null, q: null })),
+        confidence: pick.confidence,
+        evaluation: pick.evaluation,
+        evaluationLabel: pick.evaluationLegend[String(Math.round(pick.evaluation))],
+        tactical: pick.tactical,
+        usage: pick.usage,
+        model: pick.model,
+      };
+    }
+    totalUsage.input_tokens += entry.usage.input_tokens;
+    totalUsage.output_tokens += entry.usage.output_tokens;
+    log.push({ ply: log.length + 1, color, player: PLAYERS[color].name, ms: Date.now() - started, ...entry });
     res.json(snapshot());
   } catch (err) {
     console.error(err);
