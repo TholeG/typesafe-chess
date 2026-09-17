@@ -83,6 +83,13 @@ The fix follows the TypeSafe rule of thumb, *keep what code can compute in code*
 - **Exact tactics at the root.** An immediate mate is always played; moves that allow a mate in
   one are excluded when an alternative exists.
 
+**Does it help now?** Re-running the same 2-game benchmark (`npm run match -- 16 6 2`, 16 evaluations
+per move, colours swapped, both players using the new tactical facts) the search won both games,
+one as White and one as Black, at about 47k tokens and 3 seconds per move versus 2.6k tokens and
+0.4 seconds for the single-call player. The search overruled Jev's first instinct in roughly half
+the moves. Two games are still a small sample; treat this as a promising signal, not a proof, and
+run `npm run match` yourself.
+
 ## Run it
 
 Requires Node.js 20+ and a TypeSafe API key ([get one at typesafe.ai](https://typesafe.ai)).
@@ -117,8 +124,8 @@ candidates (probabilities in fast mode, visits / prior / Q in MCTS mode), the sh
 latency and token usage per move. Click any move in the list to review that position and its
 analysis.
 
-Cost guide: a fast move uses roughly 2–3k tokens. An MCTS move with 16 simulations uses roughly
-30–40k tokens and 3 seconds. Defaults can be set with `MODE`, `MCTS_SIMULATIONS` and
+Cost guide: a fast move uses roughly 2–3k tokens. An MCTS move with 16 evaluations uses roughly
+40–50k tokens and 3 seconds. Defaults can be set with `MODE`, `MCTS_SIMULATIONS` and
 `MCTS_CONCURRENCY` environment variables.
 
 The API key stays on the server. The browser only talks to three local endpoints:
