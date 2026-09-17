@@ -99,6 +99,10 @@ export class MCTS {
    *        position evaluator; defaults to Jev. Injectable for tests.
    * @param {number} [opts.tacticalWeight=0.5] share of the leaf value taken from the code-side
    *        tactical delta (0 = pure Jev value, 1 = pure material/mate search).
+   * @param {"q"|"visits"} [opts.selection="q"] final choice: Q among well-covered moves, or most visits
+   * @param {number} [opts.minVisitFraction=0.5] coverage needed (share of the max visits) to rank by Q
+   * @param {number} [opts.minVisits=2] absolute minimum visits to rank by Q
+   * @param {number} [opts.fpuPenalty=0.2] first-play urgency penalty below the parent's value
    */
   constructor(opts = {}) {
     this.simulations = opts.simulations ?? 16;
@@ -106,6 +110,10 @@ export class MCTS {
     this.cpuct = opts.cpuct ?? 1.5;
     this.evaluateFn = opts.evaluate ?? evaluatePosition;
     this.tacticalWeight = opts.tacticalWeight ?? 0.5;
+    this.selection = opts.selection ?? "q";
+    this.minVisitFraction = opts.minVisitFraction ?? 0.5;
+    this.minVisits = opts.minVisits ?? 2;
+    this.fpuPenalty = opts.fpuPenalty ?? 0.2;
     this.cache = new Map(); // cacheKey -> resolved evaluation
     this.rootMaterial = 0;
     this.stats = this.freshStats();
@@ -162,7 +170,7 @@ export class MCTS {
     const sqrtN = Math.sqrt(1 + Object.values(node.edges).reduce((a, e) => a + e.N, 0));
     // First-play urgency: unvisited moves inherit the parent's value minus a small penalty,
     // so the search does not have to try every move before trusting the prior.
-    const fpu = Math.max(-1, (node.value ?? 0) - 0.2);
+    const fpu = Math.max(-1, (node.value ?? 0) - this.fpuPenalty);
     let best = null, bestScore = -Infinity;
     for (const [san, e] of Object.entries(node.edges)) {
       const Q = e.N > 0 ? e.W / e.N : fpu;
@@ -241,12 +249,13 @@ export class MCTS {
     // rank by Q among moves that received comparable coverage (at least half of the
     // most-visited move's visits, minimum 2) and fall back to visits below that.
     const maxVisits = Math.max(0, ...edges.map((e) => e.visits));
-    const minVisits = Math.max(2, Math.ceil(maxVisits / 2));
-    const byStrength = (a, b) => {
+    const minVisits = Math.max(this.minVisits, Math.ceil(maxVisits * this.minVisitFraction));
+    const byVisits = (a, b) => b.visits - a.visits || (b.q ?? -2) - (a.q ?? -2) || b.prior - a.prior;
+    const byStrength = this.selection === "visits" ? byVisits : (a, b) => {
       const aOk = a.visits >= minVisits, bOk = b.visits >= minVisits;
       if (aOk !== bOk) return aOk ? -1 : 1;
       if (aOk && bOk) return (b.q ?? -2) - (a.q ?? -2) || b.visits - a.visits || b.prior - a.prior;
-      return b.visits - a.visits || (b.q ?? -2) - (a.q ?? -2) || b.prior - a.prior;
+      return byVisits(a, b);
     };
     edges.sort(byStrength);
     const priorBest = [...edges].sort((a, b) => b.prior - a.prior)[0];

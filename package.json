@@ -12,7 +12,8 @@
     "prestart": "vite build",
     "regret": "node scripts/regret.mjs",
     "elo": "node scripts/elo.mjs",
-    "selftest": "node scripts/mcts-selftest.mjs"
+    "selftest": "node scripts/mcts-selftest.mjs",
+    "sweep": "node scripts/sweep.mjs"
   },
   "keywords": [],
   "type": "module",
