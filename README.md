@@ -54,53 +54,34 @@ from a neural network: a **policy** (prior probability for every legal move, fro
 answer) and a **value** (how good the position is for the side to move, from the Score answer,
 mapped to −1…+1). [`mcts.js`](mcts.js) wires that into a PUCT tree search:
 
-- Every tree node costs one Jev call. There are no random rollouts.
+- Every new tree node costs one Jev call. There are no random rollouts. The budget is counted
+  in API calls; transpositions are cached for the whole game.
 - Selection follows PUCT: `Q + c · P · √N_parent / (1 + N_child)`, so Jev's prior steers the
-  search towards its favourite moves while the value from deeper positions can overrule it.
-- Leaves are evaluated concurrently (virtual loss), so 16 simulations take about 3 seconds instead of 6.
-- Transpositions are cached for the whole game.
-- The move with the most visits is played. The UI shows visits, prior and Q for the top candidates,
-  and says whether the search **confirmed or overruled** Jev's first instinct.
+  search towards its favourite moves while values from deeper positions can overrule it.
+- Leaves are evaluated concurrently (virtual loss), so 16 evaluations take a few seconds.
+- The final move is ranked by Q among candidates with comparable coverage, because with a
+  small budget visit counts mostly mirror the prior.
+- The UI shows visits, prior and Q for the top candidates and says whether the search
+  **confirmed or overruled** Jev's first instinct.
 
-This is what "programmable common sense" looks like in practice: the model never sees a search
-tree, it just answers the same typed questions about many positions, and 150 lines of ordinary
-code turn those answers into look-ahead.
+**What the first benchmark taught us.** The initial version lost to the single-call player.
+Dissecting a lost position with `scripts/mcts-inspect.mjs` showed why: Jev's Score is an absolute
+judgment, and once one side is materially ahead it says "clearly better" for *every* child
+position, so the tree had nothing to rank on and its choices were noise. The tree mechanics were
+fine (verified with an injected perfect-information evaluator in `scripts/mcts-selftest.mjs` and
+against an alpha-beta oracle in `scripts/mcts-oracle.mjs`, plus an independent code review).
 
-**Does it help?** Honest answer from the first benchmark (`npm run match`, 16 simulations,
-2 games, colours swapped): one draw and one loss against the single-call player, at roughly
-12× the tokens per move. The search overruled Jev's first instinct in about a third of the moves,
-but with a coarse 7-level value signal and only 16 expansions over ~30 legal moves the tree is
-shallow, and one-move tactics (a hanging recapture, a mate in one) still slip through. Two games
-prove nothing either way; treat the numbers as a starting point and run your own. The most
-promising levers are cheap code-side facts in the option descriptions (mate-in-one for both sides,
-a simple exchange evaluation) rather than more simulations.
+The fix follows the TypeSafe rule of thumb, *keep what code can compute in code*
+([`tactics.js`](tactics.js)):
 
-The whole integration is [`jev-player.js`](jev-player.js), about 170 lines including the
-option builder. The relevant request looks like this:
-
-```js
-const { answers } = await client.systemOne({
-  state: { you_play: "white", board_ascii, fen, recent_moves, material_balance, your_style },
-  questions: {
-    move: choice("Which move should White play now?", {
-      "Nf3": { piece: "knight", from: "g1", to: "f3" },
-      "Bxf7+": { piece: "bishop", from: "c4", to: "f7", captures: "pawn", gives_check: true,
-                 piece_can_be_captured_on_arrival: "yes, by king, and it is NOT defended" },
-      // ... one entry per legal move, up to 255 options
-    }),
-    evaluation: score("How good is this position for the side to move?", [
-      "Lost", "Clearly worse", "Slightly worse", "Equal", "Slightly better", "Clearly better", "Winning",
-    ]),
-    tactical: noul("Is the position tactically sharp right now?"),
-  },
-});
-
-answers.move.choice          // "Nf3"
-answers.move.probabilities   // { Nf3: 0.35, Nc3: 0.35, d4: 0.16, ... }
-answers.move.confidence      // 0.32  – flat distribution, several moves are fine
-answers.evaluation.score     // 3.18  – between "Equal" and "Slightly better"
-answers.tactical.noul        // 0.12
-```
+- **Exact facts in the option descriptions.** Each candidate move now carries an exchange
+  estimate from a capture-only lookahead ("wins about 3 after forced recaptures") and a flag if it
+  allows a mate in one. This sharpens Jev's policy in both modes.
+- **Hybrid leaf value.** In the search, Jev's value is blended with the change in settled material
+  relative to the root and with mate-in-one detection. Jev keeps the positional judgment, code
+  supplies the tactical delta that a coarse rubric cannot express.
+- **Exact tactics at the root.** An immediate mate is always played; moves that allow a mate in
+  one are excluded when an alternative exists.
 
 ## Run it
 
@@ -164,10 +145,12 @@ Expect creative openings, sound development, and the occasional blunder. Expect 
 | File | Purpose |
 | --- | --- |
 | `jev-player.js` | Builds the state and questions, calls the TypeSafe SDK, returns policy and value |
-| `mcts.js` | PUCT tree search using Jev's policy and value, with concurrency and a transposition cache |
+| `mcts.js` | PUCT tree search using Jev's policy and hybrid value, with concurrency and a transposition cache |
+| `tactics.js` | Exact code-side helpers: material, capture-only lookahead, mate in one |
 | `server.js` | Express server, game state, settings and the JSON endpoints; serves the built client |
 | `client/` | React UI (Vite + [react-chessboard](https://github.com/Clariity/react-chessboard)): board, arrows, eval bar, analysis, move review |
 | `scripts/match.mjs` | Benchmark: MCTS vs fast player with alternating colours |
+| `scripts/mcts-selftest.mjs`, `mcts-oracle.mjs`, `mcts-inspect.mjs` | Mechanics tests without API calls, and a tree dump for any position |
 
 ## Learn more about TypeSafe
 

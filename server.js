@@ -39,6 +39,7 @@ let log = []; // one entry per played move, including Jev's answers
 let totalUsage = { input_tokens: 0, output_tokens: 0 };
 let busy = false;
 let searcher = new MCTS(settings); // its position cache persists for the whole game
+let gameVersion = 0; // bumped on every reset so a stale search result is discarded
 
 function snapshot() {
   return {
@@ -68,6 +69,7 @@ function resultText() {
 }
 
 function newGame() {
+  gameVersion++;
   chess = new Chess();
   log = [];
   totalUsage = { input_tokens: 0, output_tokens: 0 };
@@ -95,6 +97,8 @@ app.post("/api/step", async (_req, res) => {
   if (busy) return res.status(409).json({ error: "Jev is still thinking." });
   if (chess.isGameOver()) return res.json(snapshot());
   busy = true;
+  const version = gameVersion;
+  const game = chess;
   const color = chess.turn();
   const started = Date.now();
   // san -> { from, to } for the position before the move, used to draw candidate arrows
@@ -103,7 +107,8 @@ app.post("/api/step", async (_req, res) => {
   try {
     let entry;
     if (settings.mode === "mcts") {
-      const r = await searcher.search(chess);
+      const r = await searcher.search(game);
+      if (version !== gameVersion) return res.status(409).json({ error: "Game was reset while thinking.", ...snapshot() });
       const move = chess.move(r.san);
       entry = {
         mode: "mcts",
@@ -114,6 +119,8 @@ app.post("/api/step", async (_req, res) => {
         q: r.q,
         priorBest: r.priorBest,
         changedBySearch: r.changedBySearch,
+        reason: r.reason,
+        pendingCollisions: r.pendingCollisions,
         candidates: withSquares(r.candidates), // { san, prior, visits, q, from, to }
         confidence: r.rootEval.confidence,
         evaluation: r.rootEval.evaluation,
@@ -123,7 +130,8 @@ app.post("/api/step", async (_req, res) => {
         model: r.model ?? r.rootEval.model,
       };
     } else {
-      const pick = await pickMove(chess);
+      const pick = await pickMove(game);
+      if (version !== gameVersion) return res.status(409).json({ error: "Game was reset while thinking.", ...snapshot() });
       const move = chess.move(pick.san);
       entry = {
         mode: "fast",

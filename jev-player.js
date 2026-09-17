@@ -9,6 +9,7 @@
 
 import { Chess } from "chess.js";
 import { TypeSafeClient, choice, score, noul } from "@typesafe-ai/sdk";
+import { exchangeOutcome, mateInOne } from "./tactics.js";
 
 const client = new TypeSafeClient({ timeout: 20000 });
 
@@ -80,11 +81,21 @@ function describeMove(chess, move) {
       ? `yes, by ${threat.cheapestAttacker}, but the square is defended (exchange possible)`
       : `yes, by ${threat.cheapestAttacker}, and it is NOT defended (hangs the piece)`;
   }
+
+  // Exact facts from a capture-only search: net material after forced recaptures,
+  // and whether the opponent gets a mate in one after this move.
+  if (!d.result) {
+    const net = exchangeOutcome(chess, move.san);
+    if (net >= 1000) d.result = "checkmate";
+    else if (net > 0) d.exchange_estimate = `wins about ${net} after forced recaptures`;
+    else if (net < 0) d.exchange_estimate = `LOSES about ${-net} after forced recaptures`;
+    const reply = mateInOne(probe);
+    if (reply) d.allows_opponent_mate_in_one = `yes: ${reply}`;
+  }
   return d;
 }
 
-function buildState(chess, color) {
-  const history = chess.history();
+function buildState(chess, color, history = chess.history()) {
   const balance = materialBalance(chess);
   const us = color === "w" ? "white" : "black";
   const ownBalance = color === "w" ? balance : -balance;
@@ -128,7 +139,7 @@ const SCORE_MID = (SCORE_LEVELS.length - 1) / 2; // 3 = "Equal"
  *   evaluation: number, evaluationLegend: Record<string,string>, tactical: number,
  *   usage: {input_tokens:number, output_tokens:number}, model: string }>}
  */
-export async function evaluatePosition(chess) {
+export async function evaluatePosition(chess, { history } = {}) {
   const color = chess.turn();
   const moves = chess.moves({ verbose: true });
   if (moves.length === 0) throw new Error("no legal moves");
@@ -138,13 +149,14 @@ export async function evaluatePosition(chess) {
   const side = color === "w" ? "white" : "black";
 
   const { answers, usage, model } = await client.systemOne({
-    state: buildState(chess, color),
+    state: buildState(chess, color, history),
     questions: {
       move: choice(
         {
           question: `Which move should ${PLAYERS[color].name} (${side}) play now?`,
           guidance: [
-            "Never hang material for nothing: avoid moves marked as NOT defended unless they checkmate or win more material.",
+            "Never play a move marked allows_opponent_mate_in_one unless it checkmates first.",
+            "exchange_estimate comes from a capture-only lookahead: prefer moves that win material, avoid moves that LOSE material unless they checkmate or force a bigger gain.",
             "Prefer captures of higher-value pieces, checks that gain something, and moves that improve piece activity.",
             "In the opening: develop minor pieces, control the centre, castle early.",
             "In the endgame: activate the king, push passed pawns, avoid stalemate when ahead.",

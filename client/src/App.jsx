@@ -198,6 +198,7 @@ export default function App() {
                     {shown.changedBySearch
                       ? <>Search overruled the prior: Jev's first instinct was <b className="mono">{shown.priorBest}</b>, the tree preferred <b className="mono">{shown.san}</b>.</>
                       : <>Search confirmed Jev's first instinct (<b className="mono">{shown.priorBest}</b>).</>}
+                    {shown.reason && <> Exact tactics: {shown.reason}.</>}
                   </div>
                 )}
                 <div className="meter">
